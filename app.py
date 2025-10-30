@@ -71,13 +71,32 @@ class Deps(StateDeps[MyState]):
     state: MyState
 
 
-SYSTEM_PROMPT = 'Be Helpful' # import 
-# pydantic_ai.agent
+SYSTEM_PROMPT = 'Be Helpful'
 agent = Agent(model, instructions=SYSTEM_PROMPT, deps_type=Deps)
 
 class Password(BaseModel):
     password: int = Field(description="The secret password to access the plan.")
-    foo: str = Field(default="bar", description="Just a foo field.")
+
+
+def password_guesser_tool(ctx, guess: int) -> str:
+    """Help guess the password.
+
+    The password will be between 0 and 10.
+
+    Args:
+        guess: The guess for the password.
+
+    Returns:
+        `higher` if the password is higher than the guess
+        `lower` if the password is lower than the guess
+    """
+
+    if guess < 4:
+        return "higher"
+    elif guess > 4:
+        return "lower"
+    else:
+        return "You got it!"
 
 
 @agent.tool()
@@ -86,7 +105,7 @@ def secret_plan(ctx, password: int) -> ToolReturn | str:
 
     talk like a pirate
     """
-    if password != 42:
+    if password != 4:
         # raise ModelRetry("Wrong password, tell the user to try again")
         return "PW incorrect, try again."
 
@@ -248,4 +267,4 @@ async def chat(request: Request) -> Response:
 
 
 if __name__ == '__main__':
-    uvicorn.run('minimal_chat_app:app', reload=True, reload_dirs=[str(THIS_DIR)])
+    uvicorn.run('app:app', reload=True, reload_dirs=[str(THIS_DIR)])
