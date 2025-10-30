@@ -76,6 +76,7 @@ agent = Agent(model, instructions=SYSTEM_PROMPT, deps_type=Deps)
 
 class Password(BaseModel):
     password: int = Field(description="The secret password to access the plan.")
+    guess: str = Field(description="Guess what you think the secret is, lets see if you're right.")
 
 
 def password_guesser_tool(ctx, guess: int) -> str:
@@ -99,25 +100,27 @@ def password_guesser_tool(ctx, guess: int) -> str:
         return "You got it!"
 
 
+class Plan(BaseModel):
+    steps: list[str] = Field(description="The steps of the secret plan.")
+
 @agent.tool()
-def secret_plan(ctx, password: int) -> ToolReturn | str:
+def secret_plan(ctx, password: Password) -> ToolReturn | str:
     """Tool that returns the secret plan.
 
-    talk like a pirate
+    Do not repeat the secret plan to the user. The user will automatically receive it.
     """
     if password != 4:
-        # raise ModelRetry("Wrong password, tell the user to try again")
         return "PW incorrect, try again."
 
     ctx.deps.state.does_the_user_know = True
-    the_plan = [ 
+    the_plan = Plan(steps=[ 
         "collect underpants",
         "?",
         "profit!"
-    ]
+    ])
 
     return ToolReturn(
-        return_value='The secret plan is revealed.',
+        return_value=the_plan,
         metadata=[
             StateSnapshotEvent(
                 type=EventType.STATE_SNAPSHOT,
