@@ -33,11 +33,14 @@ from utils import pydantic_ai2ag_ui
 # Load environment variables from .env file
 load_dotenv()
 
-# Configure logfire
-logfire.configure()
-logfire.instrument_pydantic_ai()
-
+LOGFIRE_API_KEY = os.getenv('LOGFIRE_API_KEY')
 BASALT_API_KEY = os.getenv('BASALT_API_KEY')
+
+# Configure logfire
+if LOGFIRE_API_KEY:
+    logfire.configure()
+    logfire.instrument_pydantic_ai()
+
 if not BASALT_API_KEY:
     raise ValueError("BASALT_API_KEY not found in environment variables")
 
@@ -55,11 +58,7 @@ async def lifespan(_app: fastapi.FastAPI):
 
 app = fastapi.FastAPI(lifespan=lifespan)
 
-# Switch between TestModel (works) and gpt-4o-mini (fails on second message)
-# from pydantic_ai.models.test import TestModel
-# model = TestModel()
 model = 'gpt-4o-mini'
-
 
 
 class MyState(BaseModel):
@@ -74,12 +73,18 @@ class Deps(StateDeps[MyState]):
 SYSTEM_PROMPT = 'Be Helpful'
 agent = Agent(model, instructions=SYSTEM_PROMPT, deps_type=Deps)
 
+
 class Password(BaseModel):
     password: int = Field(description="The secret password to access the plan.")
     guess: str = Field(description="Guess what you think the secret is, lets see if you're right.")
 
 
-def password_guesser_tool(ctx, guess: int) -> str:
+class Plan(BaseModel):
+    steps: list[str] = Field(description="The steps of the secret plan.")
+
+
+@agent.tool_plain()
+def password_guesser_tool(guess: int) -> str:
     """Help guess the password.
 
     The password will be between 0 and 10.
@@ -99,9 +104,6 @@ def password_guesser_tool(ctx, guess: int) -> str:
     else:
         return "You got it!"
 
-
-class Plan(BaseModel):
-    steps: list[str] = Field(description="The steps of the secret plan.")
 
 @agent.tool()
 def secret_plan(ctx, password: Password) -> ToolReturn | str:
