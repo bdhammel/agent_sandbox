@@ -5,10 +5,12 @@ without corresponding tool responses, causing OpenAI to reject follow-up
 messages with 400 errors.
 """
 
+import json
 import os
 from pathlib import Path
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
+from http import HTTPStatus
 
 from dotenv import load_dotenv
 from basalt import Basalt
@@ -16,7 +18,8 @@ import logfire
 import uvicorn
 import fastapi
 from fastapi.requests import Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from pydantic import ValidationError
 from ag_ui.core import EventType, StateSnapshotEvent, CustomEvent, MessagesSnapshotEvent
 from ag_ui.encoder import EventEncoder
 from pydantic import BaseModel, Field
@@ -24,8 +27,8 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.ag_ui import handle_ag_ui_request
-from pydantic_ai.ag_ui import StateDeps
+from pydantic_ai.ui import SSE_CONTENT_TYPE
+from pydantic_ai.ui.ag_ui import AGUIAdapter, StateDeps
 
 from db import Database
 from utils import pydantic_ai2ag_ui
@@ -244,31 +247,45 @@ async def get_display_messages(request: Request, conversation_id: str):
 async def chat(request: Request) -> Response:
     """Handle chat requests with database persistence."""
     import time
-    import json as json_module
     
     db: Database = request.state.db
+    accept = request.headers.get('accept', SSE_CONTENT_TYPE)
     
-    # Read body to extract threadId and pass to on_complete
+    # Read body to extract threadId
     body_bytes = await request.body()
-    body = json_module.loads(body_bytes)
+    body = json.loads(body_bytes)
     conversation_id = body.get('threadId', f'conv-{int(time.time() * 1000)}')
     
-    # Reconstruct request for handle_ag_ui_request
-    async def receive():
-        return {'type': 'http.request', 'body': body_bytes}
+    # Build run input from request body
+    try:
+        run_input = AGUIAdapter.build_run_input(body_bytes)
+    except ValidationError as e:
+        return Response(
+            content=json.dumps(e.json()),
+            media_type='application/json',
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+        )
     
-    from fastapi import Request as FastAPIRequest
-    modified_request = FastAPIRequest(request.scope, receive)
-    modified_request._state = request.state
-    
+    # Create adapter with agent, input, and accept header
     deps = Deps(state=MyState())
-    return await handle_ag_ui_request(
-        agent,
-        modified_request,
-        model_settings={'parallel_tool_calls': False},
+    adapter = AGUIAdapter(
+        agent=agent,
+        run_input=run_input,
+        accept=accept,
         deps=deps,
-        on_complete=db.create_on_complete(conversation_id, body),
+        model_settings={'parallel_tool_calls': False},
     )
+    
+    # Get event stream
+    event_stream = adapter.run_stream()
+    
+    # TODO: Integrate on_complete callback
+    # on_complete_callback = db.create_on_complete(conversation_id, body)
+    
+    # Encode stream for SSE
+    sse_event_stream = adapter.encode_stream(event_stream)
+    
+    return StreamingResponse(sse_event_stream, media_type=accept)
 
 
 if __name__ == '__main__':

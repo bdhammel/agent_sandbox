@@ -1,0 +1,3 @@
+pydantic_ai==1.14.0
+ag-ui-protocol
+fastapi
