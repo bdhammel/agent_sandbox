@@ -153,7 +153,7 @@ conversationSelect.onchange = async () => {
         
         // Handle CUSTOM events with name="secret_plan"
         if (eventContent.type === 'CUSTOM' && eventContent.name === 'secret_plan') {
-          const planElement = renderSecretPlan(eventContent.value)
+          const planElement = renderSecretPlan(eventContent.value.steps)
           conversation.appendChild(planElement)
         }
         // Add more event type handlers here as needed
@@ -244,7 +244,7 @@ form.onsubmit = async (e) => {
         },
         onCustomEvent({ event }: any) {
           if (event.name === 'secret_plan') {
-            const planElement = renderSecretPlan(event.value)
+            const planElement = renderSecretPlan(event.value.steps)
             conversation.appendChild(planElement)
             window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' })
           }

@@ -11,9 +11,9 @@ from pathlib import Path
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from http import HTTPStatus
+from collections.abc import AsyncIterator
 
 from dotenv import load_dotenv
-from basalt import Basalt
 import logfire
 import uvicorn
 import fastapi
@@ -23,12 +23,14 @@ from pydantic import ValidationError
 from ag_ui.core import EventType, StateSnapshotEvent, CustomEvent, MessagesSnapshotEvent
 from ag_ui.encoder import EventEncoder
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
 from pydantic_ai.messages import ToolReturn
-from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.models.test import TestModel
 from pydantic_ai.ui import SSE_CONTENT_TYPE
-from pydantic_ai.ui.ag_ui import AGUIAdapter, StateDeps
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+from pydantic_ai.ag_ui import StateDeps
+
+from agent import Agent
+
+
 
 from db import Database
 from utils import pydantic_ai2ag_ui
@@ -37,17 +39,12 @@ from utils import pydantic_ai2ag_ui
 load_dotenv()
 
 LOGFIRE_API_KEY = os.getenv('LOGFIRE_API_KEY')
-BASALT_API_KEY = os.getenv('BASALT_API_KEY')
 
 # Configure logfire
 if LOGFIRE_API_KEY:
     logfire.configure()
     logfire.instrument_pydantic_ai()
 
-if not BASALT_API_KEY:
-    raise ValueError("BASALT_API_KEY not found in environment variables")
-
-basalt = Basalt(api_key=BASALT_API_KEY)
 
 THIS_DIR = Path(__file__).parent
 
@@ -61,7 +58,7 @@ async def lifespan(_app: fastapi.FastAPI):
 
 app = fastapi.FastAPI(lifespan=lifespan)
 
-model = 'gpt-4o-mini'
+model = 'gpt-4o'
 
 
 class MyState(BaseModel):
@@ -75,11 +72,6 @@ class Deps(StateDeps[MyState]):
 
 SYSTEM_PROMPT = 'Be Helpful'
 agent = Agent(model, instructions=SYSTEM_PROMPT, deps_type=Deps)
-
-
-class Password(BaseModel):
-    password: int = Field(description="The secret password to access the plan.")
-    guess: str = Field(description="Guess what you think the secret is, lets see if you're right.")
 
 
 class Plan(BaseModel):
@@ -109,7 +101,7 @@ def password_guesser_tool(guess: int) -> str:
 
 
 @agent.tool()
-def secret_plan(ctx, password: Password) -> ToolReturn | str:
+def secret_plan(ctx, password: int) -> ToolReturn | str:
     """Tool that returns the secret plan.
 
     Do not repeat the secret plan to the user. The user will automatically receive it.
@@ -243,6 +235,11 @@ async def get_display_messages(request: Request, conversation_id: str):
     return fastapi.responses.JSONResponse(content=messages_data)
 
 
+async def conditional_exit(event_stream: AsyncIterator):
+    async for event in event_stream:
+        yield event
+
+
 @app.post('/chat/')
 async def chat(request: Request) -> Response:
     """Handle chat requests with database persistence."""
@@ -265,27 +262,29 @@ async def chat(request: Request) -> Response:
             media_type='application/json',
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         )
-    
-    # Create adapter with agent, input, and accept header
-    deps = Deps(state=MyState())
+
+    # Create adapter with agent and run input
     adapter = AGUIAdapter(
         agent=agent,
         run_input=run_input,
-        accept=accept,
-        deps=deps,
-        model_settings={'parallel_tool_calls': False},
     )
     
-    # Get event stream
-    event_stream = adapter.run_stream()
+    # Prepare dependencies and callback
+    deps = Deps(state=MyState())
+    on_complete_callback = db.create_on_complete(conversation_id, body)
     
-    # TODO: Integrate on_complete callback
-    # on_complete_callback = db.create_on_complete(conversation_id, body)
+    # Run and stream AG-UI events
+    # Turn off parallel_tool_calls as they don't surface exceptions correctly
+    sse_event_stream = adapter.encode_stream(
+        adapter.run_stream(
+            model_settings={'parallel_tool_calls': False},
+            deps=deps,
+            on_complete=on_complete_callback,
+        )
+    )
+    conditional_event_stream = conditional_exit(sse_event_stream)
     
-    # Encode stream for SSE
-    sse_event_stream = adapter.encode_stream(event_stream)
-    
-    return StreamingResponse(sse_event_stream, media_type=accept)
+    return StreamingResponse(conditional_event_stream, media_type=accept)
 
 
 if __name__ == '__main__':

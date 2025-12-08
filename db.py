@@ -15,7 +15,7 @@ from typing import Any, TypeVar
 from ag_ui.core import RunAgentInput
 from pydantic_ai import ModelMessage, ModelMessagesTypeAdapter
 from typing_extensions import LiteralString, ParamSpec
-from pydantic_ai.ag_ui import _messages_from_ag_ui as ag_ui2pydantic_ai
+from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 
 P = ParamSpec('P')
@@ -188,7 +188,7 @@ class Database:
             """
             # Extract and convert user messages from AG-UI request
             run_input = RunAgentInput.model_validate(request_body)
-            user_messages = ag_ui2pydantic_ai(run_input.messages) if run_input.messages else []
+            user_messages = AGUIAdapter.load_messages(run_input.messages) if run_input.messages else []
             
             # Combine user messages with agent's new messages
             all_messages: list[ModelMessage] = []
