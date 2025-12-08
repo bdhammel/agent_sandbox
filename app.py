@@ -72,6 +72,7 @@ class Deps(StateDeps[MyState]):
 
 SYSTEM_PROMPT = 'Be Helpful'
 agent = Agent(model, instructions=SYSTEM_PROMPT, deps_type=Deps)
+agent.terminal_tools = {"secret_plan"}
 
 
 class Plan(BaseModel):
