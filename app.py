@@ -275,16 +275,15 @@ async def chat(request: Request) -> Response:
     
     # Run and stream AG-UI events
     # Turn off parallel_tool_calls as they don't surface exceptions correctly
-    sse_event_stream = adapter.encode_stream(
+    event_stream = adapter.encode_stream(
         adapter.run_stream(
             model_settings={'parallel_tool_calls': False},
             deps=deps,
             on_complete=on_complete_callback,
         )
     )
-    conditional_event_stream = conditional_exit(sse_event_stream)
     
-    return StreamingResponse(conditional_event_stream, media_type=accept)
+    return StreamingResponse(event_stream, media_type=accept)
 
 
 if __name__ == '__main__':
