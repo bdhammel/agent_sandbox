@@ -34,13 +34,25 @@ async def main():
     print(f"Terminal tools: {agent.terminal_tools}")
     print()
     
-    # Use agent.run() directly
+    # First run - should exit early on terminal tool
     result = await agent.run("pw=4 whats the plan?")
     
     print()
-    print("=== RESULT ===")
+    print("=== FIRST RESULT (early exit) ===")
     print(f"Output type: {type(result.output)}")
     print(f"Output: {result.output}")
+    print(f"Messages count: {len(result.all_messages())}")
+    
+    # Second run - continue the conversation
+    print()
+    print("=== CONTINUING CONVERSATION ===")
+    result2 = await agent.run("whats step 2?", message_history=result.all_messages())
+    
+    print()
+    print("=== SECOND RESULT ===")
+    print(f"Output type: {type(result2.output)}")
+    print(f"Output: {result2.output}")
+
 
 
 if __name__ == "__main__":

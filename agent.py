@@ -4,6 +4,7 @@ import inspect
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, TypeAlias
 
+from pydantic_graph import End
 from pydantic_graph.beta.graph import EndMarker
 from typing_extensions import TypeVar
 
@@ -16,7 +17,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolReturnPart
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.result import FinalResult
 from pydantic_ai.run import AgentRun, AgentRunResult
@@ -40,27 +41,28 @@ Instructions: TypeAlias = (
 )
 
 
-def early_exit_if_terminal_node(
+def setup_early_exit(
     node: _agent_graph.AgentNode,
     agent_run: AgentRun,
     terminal_tools: set[str],
-) -> FinalResult | None:
-    """Check if node contains a terminal tool return and exit early if so.
+) -> None:
+    """Set up early exit if node contains a terminal tool return.
 
     When a ModelRequestNode contains a ToolReturnPart for a tool registered
-    as terminal, this function creates a FinalResult with the tool's output
-    and sets it on the agent_run so that agent_run.result works correctly.
+    as terminal, this function:
+    1. Finalizes the message history (adds ToolReturn and synthetic response)
+    2. Sets EndMarker so the next iteration returns End naturally
+
+    The caller should NOT break the loop - let iteration continue so the
+    graph completes naturally via the EndMarker.
 
     Args:
         node: The current node from the agent iteration.
-        agent_run: The AgentRun instance to set the result on.
+        agent_run: The AgentRun instance to set up for early exit.
         terminal_tools: Set of tool names that should trigger early exit.
-
-    Returns:
-        FinalResult if early exit was triggered, None otherwise.
     """
     if not isinstance(node, ModelRequestNode):
-        return None
+        return
 
     for part in node.request.parts:
         if isinstance(part, ToolReturnPart) and part.tool_name in terminal_tools:
@@ -69,11 +71,18 @@ def early_exit_if_terminal_node(
                 tool_name=part.tool_name,
                 tool_call_id=part.tool_call_id,
             )
-            # Set the EndMarker so agent_run.result works correctly
-            agent_run._graph_run._next = EndMarker(final_result)
-            return final_result
 
-    return None
+            # Finalize message history
+            agent_run._graph_run.state.message_history.append(node.request)
+            synthetic_response = ModelResponse(
+                parts=[TextPart(content="")],
+                model_name="early-exit",
+            )
+            agent_run._graph_run.state.message_history.append(synthetic_response)
+
+            # Set EndMarker - next iteration will see this and return End naturally
+            agent_run._graph_run._next = EndMarker(final_result)
+            return
 
 
 class Agent(_Agent):
@@ -166,11 +175,13 @@ class Agent(_Agent):
             async for node in agent_run:
                 calls.append(str(node))
 
-                # Check for early exit on terminal tool return
-                if self.terminal_tools and early_exit_if_terminal_node(
-                    node, agent_run, self.terminal_tools
-                ):
+                # Natural termination - End node signals completion
+                if isinstance(node, End):
                     break
+
+                # Set up early exit for terminal tools (doesn't break - lets iteration complete naturally)
+                if self.terminal_tools:
+                    setup_early_exit(node, agent_run, self.terminal_tools)
 
                 if event_stream_handler is not None and (
                     self.is_model_request_node(node) or self.is_call_tools_node(node)
