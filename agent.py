@@ -41,60 +41,30 @@ Instructions: TypeAlias = (
 )
 
 
-def setup_early_exit(
+def set_override(
     node: _agent_graph.AgentNode,
     agent_run: AgentRun,
-    terminal_tools: set[str],
-) -> None:
-    """Set up early exit if node contains a terminal tool return.
+) -> none:
 
-    When a ModelRequestNode contains a ToolReturnPart for a tool registered
-    as terminal, this function:
-    1. Finalizes the message history (adds ToolReturn and synthetic response)
-    2. Sets EndMarker so the next iteration returns End naturally
+    # synthetic_llm_message = ModelResponse(
+    #     parts=[TextPart(content="Fake end")],
+    #     finish_reason='stop',
+    #     run_id=node.request.run_id,
+    # )
+    # agent_run._graph_run.state.message_history.append(synthetic_llm_message)
+    import pdbp; pdbp.set_trace()
+    agent_run._graph_run.state.message_history.append(node.model_response)
 
-    The caller should NOT break the loop - let iteration continue so the
-    graph completes naturally via the EndMarker.
-
-    Args:
-        node: The current node from the agent iteration.
-        agent_run: The AgentRun instance to set up for early exit.
-        terminal_tools: Set of tool names that should trigger early exit.
-    """
-    if not isinstance(node, ModelRequestNode):
-        return
-
-    for part in node.request.parts:
-        if isinstance(part, ToolReturnPart) and part.tool_name in terminal_tools:
-            final_result = FinalResult(
-                output=part.content,
-                tool_name=part.tool_name,
-                tool_call_id=part.tool_call_id,
-            )
-
-            # Finalize message history
-            agent_run._graph_run.state.message_history.append(node.request)
-            synthetic_response = ModelResponse(
-                parts=[TextPart(content="")],
-                model_name="early-exit",
-            )
-            agent_run._graph_run.state.message_history.append(synthetic_response)
-
-            # Set EndMarker - next iteration will see this and return End naturally
-            agent_run._graph_run._next = EndMarker(final_result)
-            return
+    final_result = FinalResult(
+        output="fake end",
+        tool_name="",
+        tool_call_id="",
+    )
+    agent_run._graph_run._next = EndMarker(final_result)
 
 
 class Agent(_Agent):
-    """Extended Agent with terminal tool support.
-
-    Attributes:
-        terminal_tools: Set of tool names that trigger early exit when they return.
-            When a tool in this set returns, the agent run ends immediately with
-            the tool's output as the final result, skipping any further model calls.
-    """
-
-    terminal_tools: set[str] = set()
+    """Extended Agent with terminal tool support."""
 
     async def run(
         self,
@@ -157,6 +127,7 @@ class Agent(_Agent):
         event_stream_handler = event_stream_handler or self.event_stream_handler
 
         calls = []
+        override_final_result = False
 
         async with self.iter(
             user_prompt=user_prompt,
@@ -179,15 +150,16 @@ class Agent(_Agent):
                 if isinstance(node, End):
                     break
 
-                # Set up early exit for terminal tools (doesn't break - lets iteration complete naturally)
-                if self.terminal_tools:
-                    setup_early_exit(node, agent_run, self.terminal_tools)
-
                 if event_stream_handler is not None and (
                     self.is_model_request_node(node) or self.is_call_tools_node(node)
                 ):
                     async with node.stream(agent_run.ctx) as stream:
                         await event_stream_handler(_agent_graph.build_run_context(agent_run.ctx), stream)
+
+                # Check for early exit BEFORE streaming (otherwise node.stream() runs the node)
+                if deps.early_exit:
+                    set_override(node, agent_run)
+
 
         print('\n\n'.join(calls))
         assert agent_run.result is not None, 'The graph run did not finish properly'

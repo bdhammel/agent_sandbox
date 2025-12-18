@@ -29,6 +29,7 @@ from pydantic_ai.ui.ag_ui import AGUIAdapter
 from pydantic_ai.ag_ui import StateDeps
 
 from agent import Agent
+# from pydantic_ai import Agent
 
 
 
@@ -68,11 +69,12 @@ class MyState(BaseModel):
 @dataclass
 class Deps(StateDeps[MyState]):
     state: MyState
+    early_exit: bool = False
 
 
 SYSTEM_PROMPT = 'Be Helpful'
 agent = Agent(model, instructions=SYSTEM_PROMPT, deps_type=Deps)
-agent.terminal_tools = {"secret_plan"}
+# agent.terminal_tools = {"secret_plan"}
 
 
 class Plan(BaseModel):
@@ -104,13 +106,12 @@ def password_guesser_tool(guess: int) -> str:
 @agent.tool()
 def secret_plan(ctx, password: int) -> ToolReturn | str:
     """Tool that returns the secret plan.
-
-    Do not repeat the secret plan to the user. The user will automatically receive it.
     """
     if password != 4:
         return "PW incorrect, try again."
 
     ctx.deps.state.does_the_user_know = True
+    ctx.deps.early_exit = True
     the_plan = Plan(steps=[ 
         "collect underpants",
         "?",
