@@ -15,7 +15,7 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
-from pydantic_ai._agent_graph import ModelRequestNode
+from pydantic_ai._agent_graph import CallToolsNode, ModelRequestNode
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolReturnPart
 from pydantic_ai.output import OutputSpec
@@ -44,16 +44,17 @@ Instructions: TypeAlias = (
 def set_override(
     node: _agent_graph.AgentNode,
     agent_run: AgentRun,
-) -> none:
+) -> None:
 
-    # synthetic_llm_message = ModelResponse(
-    #     parts=[TextPart(content="Fake end")],
-    #     finish_reason='stop',
-    #     run_id=node.request.run_id,
-    # )
-    # agent_run._graph_run.state.message_history.append(synthetic_llm_message)
-    import pdbp; pdbp.set_trace()
-    agent_run._graph_run.state.message_history.append(node.model_response)
+    match node:
+        case ModelRequestNode():
+            msg = node.request
+        case CallToolsNode():
+            msg = node.model_response
+        case _:
+            raise ValueError(f'Cannot set override from node of type {type(node)}')
+
+    agent_run._graph_run.state.message_history.append(msg)
 
     final_result = FinalResult(
         output="fake end",
@@ -126,9 +127,6 @@ class Agent(_Agent):
 
         event_stream_handler = event_stream_handler or self.event_stream_handler
 
-        calls = []
-        override_final_result = False
-
         async with self.iter(
             user_prompt=user_prompt,
             output_type=output_type,
@@ -144,7 +142,6 @@ class Agent(_Agent):
             builtin_tools=builtin_tools,
         ) as agent_run:
             async for node in agent_run:
-                calls.append(str(node))
 
                 # Natural termination - End node signals completion
                 if isinstance(node, End):
@@ -156,11 +153,10 @@ class Agent(_Agent):
                     async with node.stream(agent_run.ctx) as stream:
                         await event_stream_handler(_agent_graph.build_run_context(agent_run.ctx), stream)
 
-                # Check for early exit BEFORE streaming (otherwise node.stream() runs the node)
+                # override the final result for early exit
                 if deps.early_exit:
                     set_override(node, agent_run)
 
 
-        print('\n\n'.join(calls))
         assert agent_run.result is not None, 'The graph run did not finish properly'
         return agent_run.result
